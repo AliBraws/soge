@@ -1,0 +1,260 @@
+# One pipeline, read top to bottom:
+#   PR   : tests · secret scan · IaC lint/scan · dependency scan · multi-arch build · terraform plan
+#   main : + push (by digest) · image scan gate · signature · deploy (approval) · smoke test
+# Third-party actions are pinned by commit SHA (tag in comment): a moved or
+# compromised tag cannot change what runs here.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }} # never cancel a deployment
+
+env:
+  AWS_REGION: eu-west-3
+  TF_IN_AUTOMATION: "1"
+  TF_VERSION: "1.17.2"
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: app/api/go.mod
+          cache-dependency-path: app/api/go.sum
+      - name: Go - verify modules, vet, race tests
+        working-directory: app/api
+        run: go mod verify && go vet ./... && go test -race -count=1 ./...
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14" # same as the Lambda runtime
+      - name: Lambda tests
+        if: hashFiles('app/functions/**/*.py') != '' # the functions land after the first pipeline
+        working-directory: app/functions
+        run: python -m unittest discover -s tests -v
+
+  security-and-lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history for the secret scan
+      - name: Secret scan (whole history)
+        uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: terraform fmt + validate
+        run: |
+          terraform fmt -check -recursive infra
+          for d in infra/bootstrap infra/platform; do
+            [ -d "$d" ] || continue # infra/platform lands after the first pipeline
+            (cd "$d" && terraform init -backend=false -input=false >/dev/null && terraform validate)
+          done
+      - uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+      - name: tflint (deprecations, 5 mandatory tags)
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --recursive --config "$GITHUB_WORKSPACE/.tflint.hcl"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: IaC misconfiguration scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+      - name: Dependency vulnerability scan (Go modules, Python)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: app
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Dockerfile lint
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: app/api/Dockerfile
+
+  image:
+    needs: [test, security-and-lint]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write # OIDC to AWS + keyless signing
+    outputs:
+      # Only the digest crosses jobs: an output containing a masked value (the
+      # account ID) would be dropped by GitHub. The deploy job rebuilds the reference.
+      digest: ${{ steps.build.outputs.digest }}
+    env:
+      PUSH: ${{ github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: AWS credentials (OIDC, ECR-push-only role)
+        if: env.PUSH == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/soge-gha-push
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true # public repo: the account ID never appears in logs
+      - id: ecr
+        if: env.PUSH == 'true'
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
+      - name: Build linux/amd64 + linux/arm64 (no QEMU), SBOM + SLSA provenance
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: app/api
+          platforms: linux/amd64,linux/arm64
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.ecr.outputs.registry || 'local' }}/soge/api:${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - id: out
+        if: env.PUSH == 'true'
+        run: echo "image=${{ steps.ecr.outputs.registry }}/soge/api@${{ steps.build.outputs.digest }}" >> "$GITHUB_OUTPUT" # step output, same job: fine
+      - name: Image vulnerability gate (HIGH/CRITICAL with a fix = fail)
+        if: env.PUSH == 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.out.outputs.image }}
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+        if: env.PUSH == 'true'
+      - name: Sign by digest (keyless, Sigstore + GitHub OIDC)
+        if: env.PUSH == 'true'
+        run: cosign sign --yes "${{ steps.out.outputs.image }}"
+
+  plan:
+    if: github.event_name == 'pull_request'
+    needs: [security-and-lint]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    defaults:
+      run:
+        working-directory: infra/platform
+    env:
+      TF_VAR_owner: ${{ vars.OWNER }}
+      TF_VAR_github_repository: ${{ github.repository }}
+      TF_VAR_hosted_zone_id: ${{ secrets.HOSTED_ZONE_ID }}
+      TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+      TF_VAR_api_image: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-3.amazonaws.com/soge/api@sha256:0000000000000000000000000000000000000000000000000000000000000000 # plan only
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/soge-gha-plan
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true # public repo: the account ID never appears in logs
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - run: terraform init -input=false -backend-config="bucket=soge-tfstate-${{ secrets.AWS_ACCOUNT_ID }}" -backend-config="kms_key_id=alias/soge-state"
+      - run: terraform plan -input=false -lock=false -no-color -out=tfplan > plan.txt; cat plan.txt
+      - name: Post the plan on the PR
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            // Only the summary line is posted: a PR comment is not covered by log
+            // masking. The full plan stays in the (masked) job log.
+            const plan = require('fs').readFileSync('infra/platform/plan.txt', 'utf8');
+            const summary = (plan.match(/^(Plan:.*|No changes\..*)$/m) || ['plan failed, see the job log'])[0];
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.createComment({ ...context.repo, issue_number: context.issue.number,
+              body: `#### terraform plan (platform)\n\`${summary}\`\n\nFull plan: ${url}` });
+
+  deploy:
+    # DEPLOY_ENABLED (repository variable) is switched on once the platform
+    # stack is complete; before that, main only builds, scans and signs.
+    if: github.ref == 'refs/heads/main' && vars.DEPLOY_ENABLED == 'true'
+    needs: [image]
+    runs-on: ubuntu-24.04
+    environment: prod # required reviewers; the apply role trusts only this environment
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra/platform
+    env:
+      TF_VAR_owner: ${{ vars.OWNER }}
+      TF_VAR_github_repository: ${{ github.repository }}
+      TF_VAR_hosted_zone_id: ${{ secrets.HOSTED_ZONE_ID }}
+      TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+      TF_VAR_api_image: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-3.amazonaws.com/soge/api@${{ needs.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/soge-gha-apply
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true # public repo: the account ID never appears in logs
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - name: Verify the signature before deploying
+        run: |
+          cosign verify "$TF_VAR_api_image" \
+            --certificate-identity "https://github.com/${{ github.repository }}/.github/workflows/ci.yml@refs/heads/main" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com > /dev/null
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - run: terraform init -input=false -backend-config="bucket=soge-tfstate-${{ secrets.AWS_ACCOUNT_ID }}" -backend-config="kms_key_id=alias/soge-state"
+      - name: Phase 1 - network, database and migration task only
+        # Migrations run BEFORE the new image serves traffic. They are expand/contract
+        # (always backward compatible), so the running version keeps working.
+        # These targets are no-ops after the first deployment, except the task definition.
+        run: |
+          terraform apply -input=false -auto-approve \
+            -target=aws_route_table_association.this -target=aws_network_acl_rule.this \
+            -target=aws_vpc_security_group_ingress_rule.flow -target=aws_vpc_security_group_egress_rule.flow \
+            -target=aws_vpc_security_group_egress_rule.s3 -target=aws_vpc_endpoint.interface -target=aws_vpc_endpoint.s3 \
+            -target=aws_rds_cluster_instance.this -target=aws_ecs_task_definition.migrate
+      - name: Run migrations (one-shot Fargate task, fails the job on a non-zero exit)
+        run: |
+          set -euo pipefail
+          CLUSTER=$(terraform output -raw ecs_cluster)
+          TD=$(terraform output -raw migrate_task_definition)
+          SUBNETS=$(terraform output -json migrate_network | jq -r '.subnets|join(",")')
+          SGS=$(terraform output -json migrate_network | jq -r '.security_groups|join(",")')
+          ARN=$(aws ecs run-task --cluster "$CLUSTER" --task-definition "$TD" --launch-type FARGATE \
+            --propagate-tags TASK_DEFINITION \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$ARN"
+          test "$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$ARN" --query 'tasks[0].containers[0].exitCode' --output text)" = "0"
+      - name: Phase 2 - full apply (rolling deployment, circuit breaker + SLO-alarm rollback)
+        run: terraform plan -input=false -out=tfplan && terraform apply -input=false tfplan
+      - name: Wait for a steady state
+        run: aws ecs wait services-stable --cluster "$(terraform output -raw ecs_cluster)" --services api
+      - name: Smoke test through the public edge
+        run: |
+          set -euo pipefail
+          URL=$(terraform output -raw url)
+          curl -fsS --tlsv1.3 --http2 -o /dev/null -w 'UI %{http_version} %{http_code}\n' "$URL/"
+          TOKEN=$(curl -fsS --tlsv1.3 -X POST "$URL/x/s" | jq -r .token)
+          curl -fsS --tlsv1.3 -H "Authorization: Bearer $TOKEN" "$URL/x/q?p=EURUSD" | jq -e '.bid < .ask'
+          if curl -sS --tls-max 1.2 -o /dev/null "$URL/" 2>/dev/null; then echo "TLS 1.2 must be refused"; exit 1; fi

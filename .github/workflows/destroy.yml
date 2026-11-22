@@ -1,0 +1,57 @@
+# Tears the platform stack down (cost control between rehearsals / after the demo).
+# Same OIDC apply role and protected "prod" environment as the deployment: a
+# destroy also needs your approval, and must be confirmed by typing "soge".
+# The bootstrap (state bucket, OIDC, CI roles, ECR) is NOT destroyed here: the
+# pipeline cannot remove the roles it runs with. See docs/RUNBOOK.md.
+name: destroy
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "soge" to destroy the platform stack'
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-refs/heads/main # never runs at the same time as a deployment
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-3
+  TF_IN_AUTOMATION: "1"
+  TF_VERSION: "1.17.2"
+
+jobs:
+  destroy:
+    if: github.ref == 'refs/heads/main' && inputs.confirm == 'soge'
+    runs-on: ubuntu-24.04
+    environment: prod
+    permissions:
+      contents: read
+      id-token: write
+    defaults:
+      run:
+        working-directory: infra/platform
+    env:
+      TF_VAR_owner: ${{ vars.OWNER }}
+      TF_VAR_github_repository: ${{ github.repository }}
+      TF_VAR_hosted_zone_id: ${{ secrets.HOSTED_ZONE_ID }}
+      TF_VAR_alarm_email: ${{ secrets.ALARM_EMAIL }}
+      # Required by the variable validation only; nothing is deployed on destroy.
+      TF_VAR_api_image: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.eu-west-3.amazonaws.com/soge/api@sha256:0000000000000000000000000000000000000000000000000000000000000000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/soge-gha-apply
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true # public repo: the account ID never appears in logs
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+      - run: terraform init -input=false -backend-config="bucket=soge-tfstate-${{ secrets.AWS_ACCOUNT_ID }}" -backend-config="kms_key_id=alias/soge-state"
+      - run: terraform destroy -input=false -auto-approve
