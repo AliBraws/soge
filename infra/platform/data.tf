@@ -2,10 +2,10 @@
 # Storage is replicated 6 ways across 3 AZs by design; compute failover to a
 # reader takes ~30 s. Isolated data subnets: no route out of the VPC at all.
 
-data "aws_rds_engine_version" "pg" {
-  engine                 = "aurora-postgresql"
-  parameter_group_family = "aurora-postgresql${var.aurora_major_version}"
-  latest                 = true # newest minor of the major version
+# Version pinned explicitly (reproducible plans); minor upgrades are applied by
+# RDS in the maintenance window (auto_minor_version_upgrade on the instances).
+locals {
+  aurora_major = split(".", var.aurora_engine_version)[0]
 }
 
 resource "aws_db_subnet_group" "this" {
@@ -14,8 +14,8 @@ resource "aws_db_subnet_group" "this" {
 }
 
 resource "aws_rds_cluster_parameter_group" "this" {
-  name   = "${local.n}-pg${var.aurora_major_version}"
-  family = "aurora-postgresql${var.aurora_major_version}"
+  name   = "${local.n}-pg${local.aurora_major}"
+  family = "aurora-postgresql${local.aurora_major}"
   parameter {
     name  = "rds.force_ssl"
     value = "1"
@@ -38,7 +38,7 @@ resource "aws_rds_cluster" "this" {
   cluster_identifier                  = "${local.n}-${var.environment}"
   engine                              = "aurora-postgresql"
   engine_mode                         = "provisioned"
-  engine_version                      = data.aws_rds_engine_version.pg.version
+  engine_version                      = var.aurora_engine_version
   database_name                       = "soge"
   master_username                     = "sogeadmin"
   manage_master_user_password         = true # generated + rotated by RDS, never in tfstate

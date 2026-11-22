@@ -65,9 +65,14 @@ variable "max_tasks" {
   default = 18
 }
 
-variable "aurora_major_version" {
-  type    = string
-  default = "18"
+variable "aurora_engine_version" {
+  description = "Aurora PostgreSQL version supporting Serverless v2 in the region (aws rds describe-orderable-db-instance-options --db-instance-class db.serverless)"
+  type        = string
+  default     = "18.6"
+  validation {
+    condition     = can(regex("^[0-9]+\\.[0-9]+$", var.aurora_engine_version))
+    error_message = "Use a full major.minor version, e.g. 18.6."
+  }
 }
 
 variable "aurora_min_acu" {
