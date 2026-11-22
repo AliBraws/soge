@@ -1,0 +1,18 @@
+# terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+plan.txt
+crash.log
+**/.build/
+*.tfvars
+!*.tfvars.example
+# local
+.env
+__pycache__/
+*.pyc
+summary.json
+backend.platform.hcl
+.pre-commit-cache/
