@@ -21,6 +21,7 @@ permissions:
 jobs:
   k6:
     runs-on: ubuntu-24.04
+    timeout-minutes: 25 # the profile lasts 16 min; a hung run is killed, never left running
     strategy:
       fail-fast: false
       matrix:

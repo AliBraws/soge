@@ -92,7 +92,7 @@ Then `scripts/github-setup.sh` configures the repository:
 | PR | Go/Python tests · gitleaks · `terraform fmt/validate` · tflint (deprecations + the 5 mandatory tags) · Trivy IaC scan · Trivy dependency scan · hadolint · multi-arch build · `terraform plan` (read-only role) posted on the PR |
 | merge to `main` | Build `linux/amd64` + `linux/arm64` without emulation, SBOM + SLSA provenance · push **by digest** · Trivy image gate · cosign keyless signature |
 | approval (`prod`) | Signature verified · migrations (one-shot Fargate task) · `terraform apply` · wait for steady state · smoke test (also asserts that TLS 1.2 is refused) |
-| manual | `load-test` workflow: k6 against the public URL, thresholds = SLOs · `destroy` workflow (typed confirmation + approval) |
+| manual | `load-test` workflow: distributed k6 against the public URL, thresholds = SLOs, hard 25 min timeout · `power` workflow (`off` / `on`: pause and resume without destroying) · `destroy` workflow (typed confirmation + approval) · `ci` re-runnable on `main` to rebuild after a destroy |
 
 No AWS access key exists anywhere: GitHub authenticates through OIDC with three roles (`plan` read-only, `push` ECR only, `apply` protected environment only).
 
@@ -140,7 +140,8 @@ Runbook and SLOs: **[docs/RUNBOOK.md](docs/RUNBOOK.md)**.
 - **No ALB access logs**: ELB log delivery only supports SSE-S3, not a customer-managed key.
 - **API Gateway access logs off by default**: they require an account-wide API Gateway setting; the account is shared, so it is not modified here (`apigw_access_logs = true` once that role exists). Request visibility comes from CloudFront/WAF logs, API Gateway metrics and the application logs.
 - **Chaos testing** (AWS FIS: AZ loss + Aurora failover) is described in the runbook but not automated.
-- **Cost:** roughly $0.5–1/h at rest (interface endpoints, Aurora floor, ALB, 3 Fargate tasks). `deletion_protection = false` for the exercise, so `terraform destroy` removes everything.
+- **Cost:** hard ceilings (WAF 2000 req / 5 min per IP, API 50 req/s, 6 tasks, Aurora 2 ACU, Lambda concurrency) and a 10 USD/day budget alert. Paused with the `power` workflow, ≈ 4–5 USD/day remain (endpoints, ALB, WAF); `destroy` removes everything (`deletion_protection = false` for the exercise). See [RUNBOOK](docs/RUNBOOK.md#stop--start-cost-control-between-demos).
+- **WAF limit per IP:** users behind one corporate proxy share an IP; in production the limit would key on the session token rather than the IP.
 
 ## Repository layout
 

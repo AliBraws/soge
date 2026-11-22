@@ -125,12 +125,17 @@ resource "aws_api_gateway_gateway_response" "this" {
 
 resource "aws_api_gateway_deployment" "this" {
   rest_api_id = aws_api_gateway_rest_api.this.id
+  # Hash only configured attributes, all known at plan time. Hashing whole
+  # resource objects pulls in provider-computed fields that can differ between
+  # plan and apply ("Provider produced inconsistent final plan").
   triggers = {
-    redeploy = sha1(jsonencode([
-      aws_api_gateway_resource.x, aws_api_gateway_resource.leaf, aws_api_gateway_resource.proxy,
-      aws_api_gateway_method.this, aws_api_gateway_integration.this, aws_api_gateway_authorizer.this,
-      aws_api_gateway_gateway_response.this,
-    ]))
+    redeploy = sha1(jsonencode({
+      resources    = concat([aws_api_gateway_resource.x.id, aws_api_gateway_resource.proxy.id], [for r in aws_api_gateway_resource.leaf : r.id])
+      methods      = { for k, m in aws_api_gateway_method.this : k => [m.id, m.http_method, m.authorizer_id, m.request_parameters] }
+      integrations = { for k, i in aws_api_gateway_integration.this : k => [i.id, i.type, i.uri, i.connection_id, i.request_parameters, i.tls_config] }
+      authorizers  = { for k, a in aws_api_gateway_authorizer.this : k => [a.id, a.authorizer_uri, a.identity_source, a.authorizer_result_ttl_in_seconds] }
+      responses    = { for k, g in aws_api_gateway_gateway_response.this : k => g.response_templates }
+    }))
   }
   lifecycle { create_before_destroy = true }
 }
