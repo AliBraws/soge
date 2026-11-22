@@ -43,7 +43,8 @@ resource "aws_cloudfront_response_headers_policy" "this" {
   }
   remove_headers_config {
     dynamic "items" {
-      for_each = ["server", "x-amz-apigw-id", "x-amzn-requestid", "x-amzn-remapped-server", "x-amzn-remapped-date", "x-amzn-remapped-content-length", "x-amzn-trace-id"]
+      # x-amzn-requestid is on CloudFront's list of headers that cannot be removed
+      for_each = ["server", "x-amz-apigw-id", "x-amzn-remapped-server", "x-amzn-remapped-date", "x-amzn-remapped-content-length", "x-amzn-trace-id"]
       content { header = items.value }
     }
   }
