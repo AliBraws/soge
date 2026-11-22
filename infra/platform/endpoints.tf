@@ -63,11 +63,13 @@ resource "aws_vpc_endpoint" "s3" {
         Resource  = "${aws_s3_bucket.rates.arn}/rates/latest.json"
       },
       {
-        # ECR stores layers in this AWS-owned bucket; the object keys are not ours,
-        # so the trailing /* is the narrowest possible scope.
+        # ECR stores layers in this AWS-owned bucket. Layers are fetched with a
+        # pre-signed URL signed by ECR itself (an AWS-owned account), so the
+        # principal cannot be pinned to this account: "*" is required here (AWS
+        # documented policy), and the statement is scoped to that single bucket.
         Sid       = "EcrLayers"
         Effect    = "Allow"
-        Principal = { AWS = local.account_id }
+        Principal = "*"
         Action    = "s3:GetObject"
         Resource  = "arn:aws:s3:::prod-${var.region}-starport-layer-bucket/*"
       },
