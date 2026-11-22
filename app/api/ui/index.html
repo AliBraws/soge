@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>portal</title>
+  <link rel="stylesheet" href="/assets/app.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <header>
+    <span class="logo">portal</span>
+    <span id="src" class="chip">rates: …</span>
+    <span id="sess" class="chip">session: …</span>
+  </header>
+  <main>
+    <section id="board" aria-label="Quotes"></section>
+    <section class="ticket" aria-label="Ticket">
+      <h2>Ticket</h2>
+      <div id="locked" class="locked">Select a price to lock it.</div>
+      <label>Notional <input id="notional" type="number" min="1000" max="10000000" step="1000" value="1000000"></label>
+      <button id="exec" disabled>Execute</button>
+      <p id="msg" role="status"></p>
+    </section>
+    <section aria-label="Blotter">
+      <h2>Blotter</h2>
+      <table><thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th></tr></thead>
+      <tbody id="blotter"></tbody></table>
+    </section>
+  </main>
+</body>
+</html>
