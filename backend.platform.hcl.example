@@ -1,0 +1,3 @@
+# cp backend.platform.hcl.example backend.platform.hcl (gitignored)
+bucket     = "soge-tfstate-<account_id>"
+kms_key_id = "alias/soge-state"
