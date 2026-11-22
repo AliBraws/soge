@@ -6,7 +6,7 @@ resource "aws_ecs_cluster" "this" {
   name = "${local.n}-${var.environment}"
   setting {
     name  = "containerInsights"
-    value = "enhanced"
+    value = "enabled" # standard Container Insights: enough for the dashboard, cheaper than "enhanced"
   }
 }
 
@@ -48,8 +48,8 @@ resource "aws_ecs_task_definition" "api" {
   family                   = "${local.n}-api"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = 512
-  memory                   = 1024
+  cpu                      = 256 # small tasks: scaling out is visible sooner and costs less
+  memory                   = 512
   execution_role_arn       = aws_iam_role.exec["api"].arn
   task_role_arn            = aws_iam_role.task["api"].arn
   runtime_platform {
@@ -175,7 +175,7 @@ resource "aws_appautoscaling_policy" "requests" {
   resource_id        = aws_appautoscaling_target.api.resource_id
   scalable_dimension = aws_appautoscaling_target.api.scalable_dimension
   target_tracking_scaling_policy_configuration {
-    target_value       = 1000 # requests per task per minute, calibrated by the load test
+    target_value       = 300 # requests per task per minute (~5 req/s): small tasks, scale-out visible in the load test
     scale_out_cooldown = 60
     scale_in_cooldown  = 300
     predefined_metric_specification {

@@ -19,8 +19,8 @@ flowchart LR
   CF -->|"/ , /assets (cached)"| GW
   GW -.->|authorizer| L[[Lambdas outside the VPC<br/>authorizer · issuer · rotators · rates-sync]]
   subgraph VPC["VPC 10.20.0.0/16 · 3 AZ · no IGW, no NAT"]
-    ALB[Internal ALB<br/>TLS 1.3 PQ] -->|8443 TLS 1.3| API[ECS Fargate ARM64<br/>Go API + embedded UI · 3..18 tasks]
-    API -->|5432 TLS 1.3 · IAM auth| DB[(Aurora PostgreSQL 18<br/>Serverless v2 · writer + 2 readers)]
+    ALB[Internal ALB<br/>TLS 1.3 PQ] -->|8443 TLS 1.3| API[ECS Fargate ARM64<br/>Go API + embedded UI · 3..6 tasks]
+    API -->|5432 TLS 1.3 · IAM auth| DB[(Aurora PostgreSQL 18<br/>Serverless v2 · writer + reader)]
     API -->|443| EP[VPC endpoints<br/>ECR · Logs · Secrets · S3]
   end
   GW -->|VPC link v2| ALB
@@ -33,8 +33,8 @@ flowchart LR
 |---|---|---|
 | Edge | CloudFront `TLSv1.3_2025`, HTTP/2 + HTTP/3, AWS WAF (managed rules), security headers | Single public entry point; TLS 1.3 only; L7 protection |
 | API | API Gateway REST, TLS 1.3-only policy (STRICT), Lambda REQUEST authorizer, VPC link v2 | Only API Gateway flavour combining TLS 1.3-only, WAF and Lambda authorizers |
-| Compute | ECS Fargate on Graviton, 3 tasks (one per AZ) → 18, Go binary with the UI embedded | Fully containerized, no servers to patch, ~20% cheaper on ARM |
-| Data | Aurora PostgreSQL 18 Serverless v2, writer + 2 readers in 3 AZ, isolated subnets | Failover ≈ 30 s, storage replicated 6 ways, scales with load |
+| Compute | ECS Fargate on Graviton, 3 small tasks (0.25 vCPU, one per AZ) → 6, Go binary with the UI embedded | Fully containerized, no servers to patch, ~20% cheaper on ARM |
+| Data | Aurora PostgreSQL 18 Serverless v2, writer + reader in 2 AZ (0.5–2 ACU each), isolated subnets in 3 AZ | Failover ≈ 30 s, storage replicated 6 ways over 3 AZ, cost capped |
 | Network | Dedicated VPC (the default VPC is not used), 4 tiers, **no IGW, no NAT**, NACL per tier, SG-to-SG only | Nothing in the VPC can reach the internet |
 | Identity | 5-min JWT renewed silently, signing key rotated every 4 h, IAM database authentication | Short-lived credentials everywhere |
 

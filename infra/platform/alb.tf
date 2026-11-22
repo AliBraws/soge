@@ -24,9 +24,8 @@ resource "aws_lb_target_group" "api" {
   protocol_version              = "HTTP1"
   target_type                   = "ip"
   vpc_id                        = aws_vpc.this.id
-  deregistration_delay          = 20 # < app shutdown grace (25 s) < ECS stopTimeout (30 s)
-  load_balancing_algorithm_type = "least_outstanding_requests"
-  slow_start                    = 30
+  deregistration_delay          = 20                           # < app shutdown grace (25 s) < ECS stopTimeout (30 s)
+  load_balancing_algorithm_type = "least_outstanding_requests" # (incompatible with slow_start)
   health_check {
     protocol            = "HTTPS"
     path                = "/healthz" # liveness only: a DB failover must not kill healthy tasks

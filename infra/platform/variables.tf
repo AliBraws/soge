@@ -55,14 +55,15 @@ variable "api_image" {
 }
 
 variable "min_tasks" {
-  description = "One task per AZ minimum: losing an AZ leaves 2/3 of the capacity"
+  description = "One small task per AZ: losing an AZ leaves 2/3 of the capacity (3 x 0.25 vCPU)"
   type        = number
   default     = 3
 }
 
 variable "max_tasks" {
-  type    = number
-  default = 18
+  description = "Scaling ceiling, also a cost ceiling (6 x 0.25 vCPU = 1.5 vCPU)"
+  type        = number
+  default     = 6
 }
 
 variable "aurora_engine_version" {
@@ -81,9 +82,9 @@ variable "aurora_min_acu" {
 }
 
 variable "aurora_instance_count" {
-  description = "1 writer + N-1 readers, one per AZ. 2 = classic Multi-AZ; 3 = one instance in every AZ"
+  description = "1 writer + N-1 readers. 2 = Multi-AZ with automatic failover (default, cost-aware); 3 = one instance in every AZ"
   type        = number
-  default     = 3
+  default     = 2
   validation {
     condition     = var.aurora_instance_count >= 2 && var.aurora_instance_count <= 3
     error_message = "Between 2 (Multi-AZ) and 3 (one per AZ)."
@@ -91,8 +92,9 @@ variable "aurora_instance_count" {
 }
 
 variable "aurora_max_acu" {
-  type    = number
-  default = 16
+  description = "Per-instance ceiling, also a cost ceiling (1 ACU ~ 2 GiB RAM)"
+  type        = number
+  default     = 2
 }
 
 variable "deletion_protection" {
@@ -102,9 +104,27 @@ variable "deletion_protection" {
 }
 
 variable "edge_rate_limit" {
-  description = "WAF requests per IP per 5 min at the edge. 0 = off (load test from a single IP)"
+  description = "WAF: requests per client IP per 5 min (12000 = 40 req/s sustained). Above it, the IP is blocked at the edge"
   type        = number
-  default     = 0
+  default     = 12000
+}
+
+variable "api_rate_limit" {
+  description = "API Gateway: requests per second for ALL clients together (burst = 2x). Hard ceiling on load and cost"
+  type        = number
+  default     = 50
+}
+
+variable "apigw_access_logs" {
+  description = "API Gateway access logs. Requires the account-wide API Gateway CloudWatch role to already exist (not managed here: shared account)"
+  type        = bool
+  default     = false
+}
+
+variable "daily_budget_usd" {
+  description = "AWS Budget on resources tagged Project=soge: e-mail at 80% and 100% of this daily amount"
+  type        = number
+  default     = 10
 }
 
 variable "alarm_email" {

@@ -21,7 +21,7 @@ locals {
     rotator_origin = { DISTRIBUTION_ID = aws_cloudfront_distribution.this.id }
     rates_sync     = { RATES_BUCKET = aws_s3_bucket.rates.bucket }
   }
-  fn_concurrency = { authorizer = 200, issuer = 50, rotator_jwt = 2, rotator_origin = 2, rates_sync = 1 }
+  fn_concurrency = { authorizer = 20, issuer = 5, rotator_jwt = 1, rotator_origin = 1, rates_sync = 1 } # hard caps: a flood cannot scale Lambda cost
 }
 
 resource "aws_lambda_function" "fn" {

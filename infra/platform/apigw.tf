@@ -139,17 +139,22 @@ resource "aws_api_gateway_stage" "live" {
   rest_api_id          = aws_api_gateway_rest_api.this.id
   deployment_id        = aws_api_gateway_deployment.this.id
   stage_name           = "live"
-  xray_tracing_enabled = true
-  access_log_settings {
-    destination_arn = aws_cloudwatch_log_group.this["apigw"].arn
-    format = jsonencode({
-      requestId            = "$context.requestId", ip = "$context.identity.sourceIp", method = "$context.httpMethod"
-      path                 = "$context.path", status = "$context.status", latencyMs = "$context.responseLatency"
-      integrationLatencyMs = "$context.integration.latency", authorizerError = "$context.authorizer.error"
-      tlsVersion           = "$context.tlsVersion", xrayTraceId = "$context.xrayTraceId", sub = "$context.authorizer.principalId"
-    })
+  xray_tracing_enabled = false # cost: tracing is not needed for this scope
+  # REST API access logs need the ACCOUNT-WIDE "CloudWatch role" setting of API
+  # Gateway. This is a shared account: we do not change account-level settings.
+  # Enable only if that role already exists (aws apigateway get-account).
+  dynamic "access_log_settings" {
+    for_each = var.apigw_access_logs ? [1] : []
+    content {
+      destination_arn = aws_cloudwatch_log_group.this["apigw"].arn
+      format = jsonencode({
+        requestId            = "$context.requestId", ip = "$context.identity.sourceIp", method = "$context.httpMethod"
+        path                 = "$context.path", status = "$context.status", latencyMs = "$context.responseLatency"
+        integrationLatencyMs = "$context.integration.latency", authorizerError = "$context.authorizer.error"
+        tlsVersion           = "$context.tlsVersion", sub = "$context.authorizer.principalId"
+      })
+    }
   }
-  depends_on = [aws_api_gateway_account.this]
 }
 
 resource "aws_api_gateway_method_settings" "all" {
@@ -157,11 +162,13 @@ resource "aws_api_gateway_method_settings" "all" {
   stage_name  = aws_api_gateway_stage.live.stage_name
   method_path = "*/*"
   settings {
-    metrics_enabled        = true
-    logging_level          = "OFF" # execution logs would land in unencrypted auto-created groups; access logs (KMS) are enough
-    data_trace_enabled     = false # never log request/response bodies
-    throttling_rate_limit  = 2000
-    throttling_burst_limit = 4000
+    metrics_enabled    = true
+    logging_level      = "OFF" # execution logs would land in unencrypted auto-created groups; access logs (KMS) are enough
+    data_trace_enabled = false # never log request/response bodies
+    # Global ceiling for the whole API (all clients together): bounds backend
+    # load and the cost of a request flood. Above it: 429 + Retry-After.
+    throttling_rate_limit  = var.api_rate_limit
+    throttling_burst_limit = var.api_rate_limit * 2
   }
 }
 
@@ -180,33 +187,4 @@ resource "aws_api_gateway_base_path_mapping" "this" {
 }
 
 # Account-level setting: the role API Gateway uses to write access logs.
-resource "aws_api_gateway_account" "this" {
-  cloudwatch_role_arn = aws_iam_role.apigw_logs.arn
-}
 
-resource "aws_iam_role" "apigw_logs" {
-  name                 = "${local.n}-apigw-logs"
-  permissions_boundary = local.boundary_arn
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect    = "Allow"
-      Principal = { Service = "apigateway.amazonaws.com" }
-      Action    = "sts:AssumeRole"
-      Condition = { StringEquals = { "aws:SourceAccount" = local.account_id } }
-    }]
-  })
-}
-
-# Inline and scoped to the access-log group (the AWS-managed policy grants logs:* on "*").
-resource "aws_iam_role_policy" "apigw_logs" {
-  role = aws_iam_role.apigw_logs.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = ["logs:CreateLogStream", "logs:PutLogEvents", "logs:DescribeLogStreams"]
-      Resource = "${aws_cloudwatch_log_group.this["apigw"].arn}:*"
-    }]
-  })
-}

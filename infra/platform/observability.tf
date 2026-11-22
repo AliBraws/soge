@@ -36,7 +36,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
   ok_actions          = [aws_sns_topic.alarms.arn]
   metric_query {
     id          = "ratio"
-    expression  = "100 * (e5 + t5) / MAX([req, 1])"
+    expression  = "IF(req > 0, 100 * (FILL(e5, 0) + FILL(t5, 0)) / req, 0)"
     label       = "5xx %"
     return_data = true
   }
