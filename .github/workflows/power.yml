@@ -1,0 +1,98 @@
+# Pause / resume the platform without destroying it (cost control between demos).
+#   off: alarm actions muted, ECS scaled to 0 (autoscaling pinned to 0), Aurora stopped
+#   on : Aurora started, autoscaling back to min..max, ECS stable, smoke test, alarms on
+# What keeps billing while off (VPC endpoints, ALB, WAF, KMS): docs/RUNBOOK.md.
+# AWS restarts a stopped Aurora cluster after 7 days: run "off" again or destroy.
+name: power
+
+on:
+  workflow_dispatch:
+    inputs:
+      state:
+        description: "off = pause, on = resume"
+        type: choice
+        options: ["off", "on"]
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-refs/heads/main # never runs at the same time as a deployment or a destroy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: eu-west-3
+  CLUSTER: soge-prod   # ECS cluster
+  SERVICE: api
+  DB: soge-prod        # Aurora cluster
+  MIN_TASKS: "3"       # keep in line with var.min_tasks / var.max_tasks
+  MAX_TASKS: "6"
+
+jobs:
+  power:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    environment: prod # approval required, same OIDC apply role as the deployment
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/soge-gha-apply
+          aws-region: ${{ env.AWS_REGION }}
+          mask-aws-account-id: true
+
+      - name: Power off
+        if: inputs.state == 'off'
+        run: |
+          set -euo pipefail
+          alarms=$(aws cloudwatch describe-alarms --alarm-name-prefix soge- --query 'MetricAlarms[].AlarmName' --output text)
+          composite=$(aws cloudwatch describe-alarms --alarm-name-prefix soge- --alarm-types CompositeAlarm --query 'CompositeAlarms[].AlarmName' --output text)
+          # shellcheck disable=SC2086
+          [ -n "$alarms$composite" ] && aws cloudwatch disable-alarm-actions --alarm-names $alarms $composite
+          aws application-autoscaling register-scalable-target --service-namespace ecs \
+            --resource-id "service/$CLUSTER/$SERVICE" --scalable-dimension ecs:service:DesiredCount \
+            --min-capacity 0 --max-capacity 0
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count 0 --query 'service.desiredCount' --output text
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          status=$(aws rds describe-db-clusters --db-cluster-identifier "$DB" --query 'DBClusters[0].Status' --output text)
+          if [ "$status" = available ]; then
+            aws rds stop-db-cluster --db-cluster-identifier "$DB" --query 'DBCluster.Status' --output text
+          else
+            echo "Aurora is '$status': not stopped"
+          fi
+          echo "Platform paused."
+
+      - name: Power on
+        if: inputs.state == 'on'
+        env:
+          HOSTED_ZONE_ID: ${{ secrets.HOSTED_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          status=$(aws rds describe-db-clusters --db-cluster-identifier "$DB" --query 'DBClusters[0].Status' --output text)
+          [ "$status" = stopped ] && aws rds start-db-cluster --db-cluster-identifier "$DB" --query 'DBCluster.Status' --output text
+          aws rds wait db-cluster-available --db-cluster-identifier "$DB"
+          aws rds wait db-instance-available --filters "Name=db-cluster-id,Values=$DB"
+          aws application-autoscaling register-scalable-target --service-namespace ecs \
+            --resource-id "service/$CLUSTER/$SERVICE" --scalable-dimension ecs:service:DesiredCount \
+            --min-capacity "$MIN_TASKS" --max-capacity "$MAX_TASKS"
+          aws ecs update-service --cluster "$CLUSTER" --service "$SERVICE" --desired-count "$MIN_TASKS" --query 'service.desiredCount' --output text
+          aws ecs wait services-stable --cluster "$CLUSTER" --services "$SERVICE"
+          zone=$(aws route53 get-hosted-zone --id "$HOSTED_ZONE_ID" --query 'HostedZone.Name' --output text)
+          URL="https://soge.${zone%.}"
+          for i in $(seq 1 20); do
+            code=$(curl -sS --tlsv1.3 -o /dev/null -w '%{http_code}' "$URL/" || true)
+            [ "$code" = 200 ] && break
+            echo "not ready yet (HTTP $code), retry $i/20"; sleep 15
+          done
+          curl -fsS --tlsv1.3 --http2 -o /dev/null -w 'UI %{http_version} %{http_code}\n' "$URL/"
+          TOKEN=$(curl -fsS --tlsv1.3 -X POST "$URL/x/s" | jq -r .token)
+          curl -fsS --tlsv1.3 -H "Authorization: Bearer $TOKEN" "$URL/x/q?p=EURUSD" | jq -e '.bid < .ask' >/dev/null
+          alarms=$(aws cloudwatch describe-alarms --alarm-name-prefix soge- --query 'MetricAlarms[].AlarmName' --output text)
+          composite=$(aws cloudwatch describe-alarms --alarm-name-prefix soge- --alarm-types CompositeAlarm --query 'CompositeAlarms[].AlarmName' --output text)
+          # shellcheck disable=SC2086
+          [ -n "$alarms$composite" ] && aws cloudwatch enable-alarm-actions --alarm-names $alarms $composite
+          echo "Platform running: $URL"

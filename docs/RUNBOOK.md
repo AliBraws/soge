@@ -50,6 +50,19 @@ aws secretsmanager rotate-secret --secret-id <origin-secret-arn>  # CloudFront u
 - Infrastructure: revert the commit, `infra-plan` → review → apply.
 - Data: Aurora PITR (14 days) to a new cluster, then swap the endpoint (never in place).
 
+## Stop / start (cost control between demos)
+
+| Action | How | Time | What is left running |
+|---|---|---|---|
+| **Pause** | Actions → `power` → `off` → approve `prod` | ~5 min | VPC interface endpoints, ALB, WAF, KMS keys, secrets, logs: **≈ 4–5 USD/day** (estimate, eu-west-3 list prices) |
+| **Resume** | Actions → `power` → `on` → approve `prod` | ~10 min (Aurora start) | everything; the job ends with the same smoke test as the deployment |
+| **Destroy** | see *Tear down* below | ~20 min | nothing billed except S3 state and ECR images (cents) |
+| **Rebuild after destroy** | Actions → `ci` → Run workflow on `main` → approve `prod` | ~25 min | full stack, same URL |
+
+`power off` mutes alarm actions first (no alert storm), pins autoscaling to 0, scales the service to 0, then stops Aurora. `power on` does the reverse and re-enables alarms only after the smoke test passes. Terraform stays the source of truth: the next deployment re-applies `min_tasks`/`max_tasks`. **Resume before deploying**: a deployment against a stopped Aurora cluster fails. AWS restarts a stopped Aurora cluster after 7 days on its own; the daily budget alert covers that case.
+
+Load tests never keep running: the profile lasts 16 min and the job is killed at 25 min (`timeout-minutes`). Stop one early with `gh run cancel <run-id>`.
+
 ## Tear down
 
 1. **Platform**: Actions → `destroy` → Run workflow on `main`, type `soge`, approve `prod` (~15–20 min: Aurora, CloudFront).
