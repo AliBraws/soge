@@ -1,0 +1,40 @@
+# Manual load test against the public URL. k6 thresholds = SLOs: a breach fails the job.
+name: load-test
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "https://soge.<domain>"
+        required: true
+      peak_rps:
+        description: "peak requests/s PER runner (4 keeps one IP under the WAF limit of 2000 / 5 min)"
+        default: "4"
+      runners:
+        description: "parallel runners = distinct source IPs (total load = runners x peak_rps)"
+        type: choice
+        options: ["1", "2", "4"]
+        default: "4"
+
+permissions:
+  contents: read
+
+jobs:
+  k6:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON('{"1":[1],"2":[1,2],"4":[1,2,3,4]}')[inputs.runners] }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: grafana/setup-k6-action@c47136d33d365efbeb9ae7266908b5dcf98cdece # v1.3.0
+      - name: Run (inputs passed through env, never interpolated into the script)
+        env:
+          TARGET: ${{ inputs.target }}
+          PEAK_RPS: ${{ inputs.peak_rps }}
+        run: k6 run -e TARGET="$TARGET" -e PEAK_RPS="$PEAK_RPS" --summary-export=summary.json loadtest/k6.js
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: k6-summary-${{ matrix.shard }}
+          path: summary.json
