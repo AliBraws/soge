@@ -41,7 +41,7 @@ resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.this.arn
   port              = 443
   protocol          = "HTTPS"
-  ssl_policy        = "ELBSecurityPolicy-TLS13-1-3-PQ-2025-09" # TLS 1.3 only + hybrid post-quantum key exchange
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-Res-PQ-2025-09" # TLS 1.3 + restricted TLS 1.2 (ECDHE, AES-GCM), PQ: the API Gateway integration client cannot negotiate TLS 1.3 (ADR-013)
   certificate_arn   = aws_acm_certificate_validation.regional.certificate_arn
   default_action {
     type             = "forward"

@@ -257,6 +257,13 @@ jobs:
         run: |
           set -euo pipefail
           URL=$(terraform output -raw url)
+          # A fresh deployment needs a few minutes at the edge (CloudFront config,
+          # rotated origin header): wait up to 10 min for the UI before asserting.
+          for i in $(seq 1 40); do
+            code=$(curl -sS --tlsv1.3 -o /dev/null -w '%{http_code}' "$URL/" || true)
+            [ "$code" = 200 ] && break
+            echo "edge not ready yet (HTTP $code), retry $i/40"; sleep 15
+          done
           curl -fsS --tlsv1.3 --http2 -o /dev/null -w 'UI %{http_version} %{http_code}\n' "$URL/"
           TOKEN=$(curl -fsS --tlsv1.3 -X POST "$URL/x/s" | jq -r .token)
           curl -fsS --tlsv1.3 -H "Authorization: Bearer $TOKEN" "$URL/x/q?p=EURUSD" | jq -e '.bid < .ask'
