@@ -104,9 +104,13 @@ variable "deletion_protection" {
 }
 
 variable "edge_rate_limit" {
-  description = "WAF: requests per client IP per 5 min (12000 = 40 req/s sustained). Above it, the IP is blocked at the edge"
+  description = "WAF: requests per client IP per 5 min (2000 = ~6.7 req/s sustained, far above a human trader). Above it, the IP is blocked at the edge. 0 disables the rule"
   type        = number
-  default     = 12000
+  default     = 2000
+  validation {
+    condition     = var.edge_rate_limit == 0 || (var.edge_rate_limit >= 10 && var.edge_rate_limit <= 2000000000)
+    error_message = "edge_rate_limit must be 0 (disabled) or between 10 and 2e9 (AWS WAF bounds)."
+  }
 }
 
 variable "api_rate_limit" {

@@ -17,8 +17,9 @@ resource "aws_rds_cluster_parameter_group" "this" {
   name   = "${local.n}-pg${local.aurora_major}"
   family = "aurora-postgresql${local.aurora_major}"
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot" # static parameter: avoids a permanent diff in every plan
   }
   parameter {
     name  = "ssl_min_protocol_version" # TLS 1.3 end to end, including the database hop

@@ -185,6 +185,3 @@ resource "aws_api_gateway_base_path_mapping" "this" {
   stage_name  = aws_api_gateway_stage.live.stage_name
   domain_name = aws_api_gateway_domain_name.this.domain_name
 }
-
-# Account-level setting: the role API Gateway uses to write access logs.
-
