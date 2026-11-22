@@ -1,0 +1,7 @@
+# Local `make plan` only. In CI these come from Actions secrets/variables.
+owner             = "<github-login>"
+github_repository = "<github-login>/soge"
+hosted_zone_id    = "Z<hosted-zone-id>"
+alarm_email       = "<you@example.com>"
+# api_image is injected by CI (pinned by digest):
+# api_image = "<account>.dkr.ecr.eu-west-3.amazonaws.com/soge/api@sha256:<64 hex>"
