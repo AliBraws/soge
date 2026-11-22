@@ -234,7 +234,8 @@ jobs:
             -target=aws_route_table_association.this -target=aws_network_acl_rule.this \
             -target=aws_vpc_security_group_ingress_rule.flow -target=aws_vpc_security_group_egress_rule.flow \
             -target=aws_vpc_security_group_egress_rule.s3 -target=aws_vpc_endpoint.interface -target=aws_vpc_endpoint.s3 \
-            -target=aws_rds_cluster_instance.this -target=aws_ecs_task_definition.migrate
+            -target=aws_rds_cluster_instance.this -target=aws_ecs_task_definition.migrate \
+            -target=aws_iam_role_policy.exec -target=aws_ecs_cluster.this
       - name: Run migrations (one-shot Fargate task, fails the job on a non-zero exit)
         run: |
           set -euo pipefail
