@@ -1,0 +1,11 @@
+# Default gitleaks rules + narrow, reviewed exceptions (exact lines, never whole files).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public constants and test fixtures, not secrets"
+regexTarget = "line"
+regexes = [
+  '''^\s*key_algorithm\s*=\s*"EC_prime256v1"\s*$''',                      # ACM key algorithm name
+  '''req\.Header\.Set\("Idempotency-Key", "0123456789abcdef-0001"\)''',    # unit-test idempotency key
+]
