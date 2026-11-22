@@ -140,10 +140,14 @@ locals {
   # plan  : any PR or branch of this repo, read-only
   # push  : main only, ECR push only
   # apply : the protected "prod" environment only (required reviewers in GitHub)
+  # Repositories created after 2026-07-15 get an immutable subject:
+  # repo:<owner>@<owner_id>/<repo>@<repo_id>:... (renaming or recreating a repo
+  # can no longer inherit its trust). The prefix is read from GitHub, never guessed:
+  #   gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix
   ci_subjects = {
-    plan  = ["repo:${var.github_repository}:pull_request", "repo:${var.github_repository}:ref:refs/heads/*"]
-    push  = ["repo:${var.github_repository}:ref:refs/heads/main"]
-    apply = ["repo:${var.github_repository}:environment:prod"]
+    plan  = ["${var.github_sub_prefix}:pull_request", "${var.github_sub_prefix}:ref:refs/heads/*"]
+    push  = ["${var.github_sub_prefix}:ref:refs/heads/main"]
+    apply = ["${var.github_sub_prefix}:environment:prod"]
   }
   boundary_arn = "arn:${data.aws_partition.this.partition}:iam::${local.account_id}:policy/${local.name}-boundary"
 }

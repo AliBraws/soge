@@ -1,3 +1,5 @@
 owner             = "<github-login>"
 github_repository = "<github-login>/soge"
+# gh api repos/<github-login>/soge/actions/oidc/customization/sub --jq .sub_claim_prefix
+github_sub_prefix = "repo:<github-login>@<owner_id>/soge@<repo_id>"
 # allow_destroy   = true   # lets `terraform destroy` empty the state bucket and ECR

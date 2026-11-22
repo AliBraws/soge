@@ -23,6 +23,15 @@ variable "github_repository" {
   }
 }
 
+variable "github_sub_prefix" {
+  description = "OIDC subject prefix of the repository, immutable format: repo:<owner>@<owner_id>/<repo>@<repo_id>"
+  type        = string
+  validation {
+    condition     = can(regex("^repo:[A-Za-z0-9-]+@[0-9]+/[A-Za-z0-9._-]+@[0-9]+$", var.github_sub_prefix))
+    error_message = "Use the immutable prefix returned by: gh api repos/<owner>/<repo>/actions/oidc/customization/sub --jq .sub_claim_prefix"
+  }
+}
+
 variable "allow_destroy" {
   description = "Rehearsal only: let terraform destroy delete a non-empty state bucket and ECR repository"
   type        = bool

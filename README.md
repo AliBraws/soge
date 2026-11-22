@@ -69,7 +69,7 @@ Locally, API Gateway and the authorizer are replaced by `DEV_AUTH=true` (fixed s
 
 ```bash
 cd infra/bootstrap
-cp terraform.tfvars.example terraform.tfvars   # owner, github_repository
+cp terraform.tfvars.example terraform.tfvars   # owner, github_repository, github_sub_prefix (immutable OIDC subject)
 terraform init && terraform apply
 sed "s/<account_id>/$(aws sts get-caller-identity --query Account --output text)/" backend.tf.example > backend.tf
 terraform init -migrate-state                  # the bootstrap state moves into its own encrypted bucket
