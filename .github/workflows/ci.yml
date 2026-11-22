@@ -212,6 +212,8 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/soge-gha-apply
           aws-region: ${{ env.AWS_REGION }}
           mask-aws-account-id: true # public repo: the account ID never appears in logs
+      - name: ECR login (cosign reads the signature stored next to the image)
+        uses: aws-actions/amazon-ecr-login@7290e214a610b32bc0eef81748948b6d466a8783 # v2.2.0
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Verify the signature before deploying
         run: |
