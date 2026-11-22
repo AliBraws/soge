@@ -1,0 +1,10 @@
+terraform {
+  backend "s3" {
+    bucket       = "soge-tfstate-<account_id>"
+    key          = "bootstrap/terraform.tfstate"
+    region       = "eu-west-3"
+    kms_key_id   = "alias/soge-state"
+    encrypt      = true
+    use_lockfile = true
+  }
+}

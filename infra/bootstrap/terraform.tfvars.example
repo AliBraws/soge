@@ -1,0 +1,3 @@
+owner             = "<github-login>"
+github_repository = "<github-login>/soge"
+# allow_destroy   = true   # lets `terraform destroy` empty the state bucket and ECR
